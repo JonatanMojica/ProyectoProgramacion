@@ -1,0 +1,263 @@
+wifi_car_project/
+├── README.md
+├── src/     import rp2
+import network
+import ubinascii
+import machine
+import urequests as requests
+import time
+import socket
+import ure
+from machine import Timer
+import math
+
+tim = None
+# Configuración de pines para los motores
+mot0dir0 = machine.PWM(machine.Pin(16, machine.Pin.OUT))
+mot0dir1 = machine.PWM(machine.Pin(17, machine.Pin.OUT))
+mot1dir0 = machine.PWM(machine.Pin(18, machine.Pin.OUT))
+mot1dir1 = machine.PWM(machine.Pin(19 , machine.Pin.OUT))
+
+# Configuración de la frecuencia PWM
+mot0dir0.freq(1000)
+mot0dir1.freq(1000)
+mot1dir0.freq(1000)
+mot1dir1.freq(1000)
+
+# Configuración de Wi-Fi
+wlan = network.WLAN(network.STA_IF)
+wlan.active(True)
+
+# ver la direccion MAC
+mac = ubinascii.hexlify(network.WLAN().config('mac'),':').decode()
+print('mac = ' + mac)
+
+
+ssid = "Ejemplo"
+pw = "123456789"
+
+wlan.connect(ssid, pw)
+
+# Esperar conexión Wi-Fi con un tiempo de espera
+timeout = 10
+while timeout > 0:
+    if wlan.status() < 0 or wlan.status() >= 3:
+        break
+    timeout -= 1
+    print('Waiting for connection...')
+    time.sleep(1)
+
+# Función de parpadeo del LED integrado para indicar códigos de error 
+def blink_onboard_led(num_blinks):
+    led = machine.Pin('LED', machine.Pin.OUT)
+    for i in range(num_blinks):
+        led.on()
+        time.sleep(.2)
+        led.off()
+        time.sleep(.2)
+
+
+wlan_status = wlan.status()
+blink_onboard_led(wlan_status)
+
+if wlan_status != 3:
+    raise RuntimeError('Wi-Fi connection failed ',wlan_status)
+else:
+    print('Connected')
+    status = wlan.ifconfig()
+    print('ip = ' + status[0])
+    
+# Función para cargar página html  
+def get_html(html_name):
+    with open(html_name, 'r') as file:
+        html = file.read()
+        
+    return html
+
+# Configurar socket para el servidor HTTP
+addr = socket.getaddrinfo('0.0.0.0', 80)[0][-1]
+
+
+s = socket.socket()
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+s.bind(addr)
+
+s.listen(1)
+
+print('Listening on', addr)
+led = machine.Pin('LED', machine.Pin.OUT)
+
+def next_command(timer):
+    global angle_LOGO_deg, P0, P1, t, comandos
+    #commands=comandos
+    print('comandos',comandos)
+    
+    if comandos != [] :
+        tiem,m1,m2=comandos.pop(0)
+        set_PWMs(mot0dir1,mot0dir0,m1)
+        set_PWMs(mot1dir0,mot1dir1,m2)
+        tim = Timer(period=abs(tiem), mode=Timer.ONE_SHOT, callback=next_command)
+    else:
+        set_PWMs(mot0dir1,mot0dir0,0)
+        set_PWMs(mot1dir0,mot1dir1,0)
+        tim.deinit()
+        tim=None
+
+# Función para controlar los motores
+def set_PWMs(mot_dir0,mot_dir1,x_value):
+    print(mot_dir0,mot_dir1,x_value)
+    if x_value<0:
+        mot_dir0.duty_u16(-x_value)
+        mot_dir1.duty_u16(0)
+    elif x_value>0:
+        mot_dir0.duty_u16(0)
+        mot_dir1.duty_u16(x_value)
+    else:
+        mot_dir0.duty_u16(0)
+        mot_dir1.duty_u16(0)
+        
+comandos=[]
+
+# Escuchar solicitudes HTTP
+while True:
+    try:
+        cl, addr = s.accept()
+        led.on()
+       
+        print('Client connected from', addr)
+        r = cl.recv(1024)
+        
+        r = str(r)
+        print(r[:30])
+        # Utilizar expresiones regulares para encontrar los valores de x e y
+        match = ure.search(r'\?x=(-?\d+)&y=(-?\d+)', r)
+        
+        if match:
+            x_value = int(match.group(1))
+            y_value = int(match.group(2))
+
+            print(f'Valor de x: {x_value}')
+            print(f'Valor de y: {y_value}')
+            
+            set_PWMs(mot0dir1,mot0dir0,x_value)
+            set_PWMs(mot1dir0,mot1dir1,y_value)
+
+            if tim:
+                tim.deinit()
+                tim=None
+            
+        else:
+            print('No se encontraron valores de x e y en la cadena de la solicitud HTTP.')
+        
+        response = get_html('Manejo.html')
+        cl.send('HTTP/1.0 200 OK\r\nContent-type: text/html\r\n\r\n')
+        cl.send(response)
+        cl.close()
+        #print(r[:20])
+        #time.sleep(.2)
+        led.off()
+        #time.sleep(.2)
+    except OSError as e:
+        cl.close()
+        print('Connection closed')
+
+
+│   └── main.py  
+└── web/             <!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Control Del Carro</title>
+    <style>
+        body {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            grid-gap: 10px;
+            margin: 20px;
+        }
+
+        .columna {
+            padding: 10px;
+            border: 1px solid #ccc;
+        }
+
+        button {
+            width: 100%;
+            padding: 10px;
+        }
+    </style>
+</head>
+<body>
+  
+    <div class="columna">
+        <input  id="entrada1" type="text" value="1000" maxlength="6" >
+    </div>
+    <div class="columna">
+        <!-- Segundo Renglón -->
+        <button onclick="move_motors(1,1)">&uarr;</button>
+    </div>
+    <div class="columna">
+        <input  id="entrada2" type="text" value="1000" maxlength="6">
+    </div>
+    <div class="columna">
+        <!-- Tercer Renglón -->
+        <button onclick="move_motors(1,0)">&larr;</button>
+    </div>
+    <div class="columna">
+        <button onclick="move_motors(0,0)">STOP</button>
+    </div>
+    <div class="columna">
+        <button onclick="move_motors(0,1)">&rarr;</button>
+    </div>
+    <div class="columna"></div>
+    <div class="columna">
+        <!-- Cuarto Renglón -->
+        <button onclick="move_motors(-1,-1)">&darr;</button>
+    </div>
+    <div class="columna"></div>
+    
+	<script>
+	function move_motors(x, y) {
+        const valorEntrada1 = parseFloat(document.getElementById('entrada1').value);
+        const valorEntrada2 = parseFloat(document.getElementById('entrada2').value);
+
+        if (isNaN(valorEntrada1) || isNaN(valorEntrada2)) {
+            console.error('Valores de entrada no son numéricos',document.getElementById('entrada1').value,document.getElementById('entrada2').value);
+            return;
+        }
+
+        console.log('Valores de entrada:', valorEntrada1, valorEntrada2);
+
+        // Use fetch to send coordinates to the server
+        fetch(`?x=${valorEntrada1 * x}&y=${valorEntrada2 * y}`)
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Error sending coordinates to the server');
+                }
+                console.log('Coordinates sent successfully');
+            })
+            .catch(error => console.error(error));
+    }
+    
+    function draw() {
+        const commands = document.getElementById('commands').value;
+
+
+        console.log('Valores de comando:', commands);
+
+        // Use fetch to send coordinates to the server
+        fetch(`?command=${commands}`)
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Error sending coordinates to the server');
+                }
+                console.log('Commands sent successfully');
+            })
+            .catch(error => console.error(error));
+    }
+	</script>
+</body>
+</html>
+    └── index.html  

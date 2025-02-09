@@ -1,6 +1,7 @@
-wifi_car_project/
+Carrito_Inteligente/
 ├── README.md
-├── src/     import rp2
+├── src/    
+import rp2
 import network
 import ubinascii
 import machine
@@ -164,7 +165,8 @@ while True:
 
 
 │   └── main.py  
-└── web/             <!DOCTYPE html>
+└── web/            
+<!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="UTF-8">
